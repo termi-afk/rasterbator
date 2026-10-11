@@ -9,3 +9,4 @@ analysis/oracle/
 analysis/*.txt
 *.user
 ghidra_projects/
+.secrets/
