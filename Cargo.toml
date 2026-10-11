@@ -1,0 +1,14 @@
+[workspace]
+members = ["crates/rasterbator-core", "crates/rasterbator-cli", "crates/rasterbator-gui"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+repository = ""
+description = "A Rust reimplementation of The Rasterbator: turn images into printable multi-page dot posters (PDF)."
+
+[profile.release]
+lto = true
+strip = true

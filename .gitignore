@@ -1,0 +1,11 @@
+target/
+analysis/refgen/bin/
+analysis/refgen/obj/
+analysis/refgen/refs/
+analysis/refgen/rust-outs/
+analysis/refgen/images/
+analysis/decompiled/
+analysis/oracle/
+analysis/*.txt
+*.user
+ghidra_projects/

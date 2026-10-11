@@ -1,0 +1,17 @@
+[package]
+name = "rasterbator-cli"
+description = "Command line interface for the Rasterbator port"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "rasterbator"
+path = "src/main.rs"
+
+[dependencies]
+rasterbator-core = { path = "../rasterbator-core" }
+clap = { version = "4", features = ["derive"] }
+
+[lints.rust]
+unsafe_code = "forbid"

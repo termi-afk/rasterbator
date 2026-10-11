@@ -1,0 +1,19 @@
+[package]
+name = "rasterbator-gui"
+description = "Desktop wizard for the Rasterbator port"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "rasterbator-gui"
+path = "src/main.rs"
+
+[dependencies]
+rasterbator-core = { path = "../rasterbator-core" }
+eframe = "0.31"
+rfd = "0.15"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "tiff", "webp"] }
+
+[lints.rust]
+unsafe_code = "forbid"

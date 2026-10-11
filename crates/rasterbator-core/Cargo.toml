@@ -1,0 +1,13 @@
+[package]
+name = "rasterbator-core"
+description = "Rasterbation engine and PDF writer (faithful port of The Rasterbator)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "tiff", "webp"] }
+flate2 = "1"
+
+[lints.rust]
+unsafe_code = "forbid"
