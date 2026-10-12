@@ -48,8 +48,11 @@ mod numfmt;
 mod pdf;
 mod size;
 
+pub mod modern;
+
 pub use canvas::{circle_path, Canvas, CIRCLE_K};
 pub use engine::{rasterbate, ColorMode, CropRect, EngineOptions, EngineSummary};
+pub use modern::{ModernOptions, ModernPdf, JobGeometry, RenderSession, validate, DiagCode, Severity};
 pub use numfmt::format_double;
 pub use pdf::PdfDocument;
 pub use size::{
