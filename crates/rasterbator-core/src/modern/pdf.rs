@@ -294,19 +294,24 @@ impl ModernPdf {
             );
             objects[base as usize] = Some(page_obj.into_bytes());
 
-            let body = if self.raw_content {
-                page.content.clone()
+            // One well-formed stream dictionary: a nested `<<` here made
+            // the content unparseable and every page came out blank.
+            let (header, body) = if self.raw_content {
+                (
+                    format!("<< /Length {} >>\nstream\n", page.content.len()),
+                    page.content.clone(),
+                )
             } else {
-                deflate(&page.content)
+                let body = deflate(&page.content);
+                (
+                    format!(
+                        "<< /Filter /FlateDecode /Length {} >>\nstream\n",
+                        body.len()
+                    ),
+                    body,
+                )
             };
-            let mut contents = format!(
-                "<< /Length {} >>\nstream\n",
-                body.len()
-            )
-            .into_bytes();
-            if !self.raw_content {
-                contents.splice(0..0, b"<< /Filter /FlateDecode ".to_vec());
-            }
+            let mut contents = header.into_bytes();
             contents.extend_from_slice(&body);
             contents.extend_from_slice(b"\nendstream");
             objects[(base + 1) as usize] = Some(contents);
@@ -646,6 +651,42 @@ mod tests {
             image: None,
         });
         assert!(!String::from_utf8_lossy(&plain.bytes()).into_owned().contains("/PageLabels"));
+    }
+    #[test]
+    fn content_stream_dictionary_is_well_formed() {
+        // Regression test: the compressed stream dictionary used to be
+        // written as `<< /Filter /FlateDecode << /Length N >>`, which no
+        // viewer can parse, so every modern-mode page came out blank.
+        let mut pdf = ModernPdf::empty();
+        pdf.push(ModernPage {
+            boxes: PageBoxes { media: [0.0; 4], trim: [0.0; 4], bleed: [0.0; 4] },
+            content: b"0 0 1 rg 10 10 50 50 re f".to_vec(),
+            image: None,
+        });
+        let b = pdf.bytes();
+        let s = String::from_utf8_lossy(&b).into_owned();
+        assert!(s.contains("<< /Filter /FlateDecode /Length "));
+        assert!(!s.contains("FlateDecode <<"));
+
+        // Locate the stream in the raw bytes (the compressed body is
+        // not UTF-8, so offsets must not come from a lossy conversion).
+        let marker = b"stream\n";
+        let start = b
+            .windows(marker.len())
+            .position(|w| w == marker)
+            .unwrap()
+            + marker.len();
+        let tail = b"\nendstream";
+        let end = b[start..]
+            .windows(tail.len())
+            .position(|w| w == tail)
+            .unwrap()
+            + start;
+        let mut decoder = flate2::read::ZlibDecoder::new(&b[start..end]);
+        let mut out = Vec::new();
+        std::io::Read::read_to_end(&mut decoder, &mut out).unwrap();
+        assert!(out.windows(3).any(|w| w == b" rg"));
+        assert!(out.windows(3).any(|w| w == b" re"));
     }
 
     #[test]
