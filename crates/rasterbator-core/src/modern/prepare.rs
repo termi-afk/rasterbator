@@ -39,6 +39,10 @@ pub struct PrepareOptions {
     pub resample: bool,
     /// Resolution the optional resample targets.
     pub resample_dpi: u16,
+    /// Exact pixel size the resample targets: the cell grid of the source
+    /// rectangle, capped by `resample_dpi`. `None` leaves the pixels as they
+    /// are. See [`resample_target_for`].
+    pub resample_target: Option<(u32, u32)>,
     /// Colour transparent pixels resolve to.
     pub paper_color: Rgb,
 }
@@ -55,9 +59,33 @@ impl PrepareOptions {
             alpha_threshold: o.alpha_threshold,
             resample: o.resample,
             resample_dpi: o.resample_dpi,
+            resample_target: None,
             paper_color: o.paper_color,
         }
     }
+}
+
+/// The resample size for a source rectangle: one pixel per cell of the screen,
+/// capped so the image never exceeds `resample_dpi` over the poster.
+///
+/// `None` when resampling is off. One pixel per cell is what keeps a
+/// low-resolution source from aliasing: every cell then has its own pixel to
+/// average, instead of most cells falling between two source pixels.
+pub fn resample_target_for(o: &ModernOptions, rect_mm: [f64; 4]) -> Option<(u32, u32)> {
+    if !o.resample || o.resample_dpi == 0 {
+        return None;
+    }
+    let rw = (rect_mm[2] - rect_mm[0]).max(0.0);
+    let rh = (rect_mm[3] - rect_mm[1]).max(0.0);
+    if rw <= 0.0 || rh <= 0.0 {
+        return None;
+    }
+    let pitch = o.nominal_dot_mm.max(1e-6);
+    let cell_h = crate::modern::screen::cell_height(o.screen, pitch).max(1e-6);
+    let dpi = f64::from(o.resample_dpi);
+    let tw = (rw / pitch).ceil().min(rw / 25.4 * dpi).max(1.0) as u32;
+    let th = (rh / cell_h).ceil().min(rh / 25.4 * dpi).max(1.0) as u32;
+    Some((tw.max(1), th.max(1)))
 }
 
 /// Inspect, decode and prepare a source file in one call.
@@ -99,16 +127,16 @@ pub fn prepare_image(
     let mut px = to_linear(&cur);
     adjust(&mut px, cur.width(), cur.height(), opts);
     apply_alpha_threshold(&mut px, cur.width(), cur.height(), opts);
-    // 7. optional resample
-    if opts.resample && opts.resample_dpi > 0 {
-        let dpi = opts.resample_dpi;
-        let tw = (f64::from(cur.width()) * 25.4 / f64::from(dpi)).ceil().max(1.0) as u32;
-        let th = (f64::from(cur.height()) * 25.4 / f64::from(dpi)).ceil().max(1.0) as u32;
-        if tw < cur.width() || th < cur.height() {
-            let (w, h, res) = box_resample(&px, cur.width(), cur.height(), tw, th);
-            px = res;
-            let _ = (w, h);
-            return Ok(PreparedImage { width: tw, height: th, pixels: px, resampled: true });
+    // 7. optional resample to the cell grid
+    if opts.resample {
+        if let Some((tw, th)) = opts.resample_target {
+            let tw = tw.max(1);
+            let th = th.max(1);
+            if tw != cur.width() || th != cur.height() {
+                let (_, _, res) = box_resample(&px, cur.width(), cur.height(), tw, th);
+                px = res;
+                return Ok(PreparedImage { width: tw, height: th, pixels: px, resampled: true });
+            }
         }
     }
     Ok(PreparedImage { width: cur.width(), height: cur.height(), pixels: px, resampled: false })
@@ -242,6 +270,7 @@ mod tests {
             alpha_threshold: 0,
             resample: false,
             resample_dpi: 300,
+            resample_target: None,
             paper_color: Rgb::WHITE,
         }
     }
@@ -335,10 +364,10 @@ mod tests {
         let img = checker(64, 64, 1);
         let mut o = base();
         o.resample = true;
-        o.resample_dpi = 72;
+        o.resample_target = Some((1, 1));
         let p = prepare_image(&img, &o).unwrap();
         assert!(p.resampled);
-        assert!(p.width < 64);
+        assert_eq!((p.width, p.height), (1, 1));
         let v = p.pixel(0, 0).unwrap();
         let level = (v.r.max(v.g).max(v.b) + v.r.min(v.g).min(v.b)) / 2.0;
         assert!((level - 0.5).abs() < 1e-9, "resampled level {level}");
@@ -376,5 +405,22 @@ mod tests {
         assert_eq!(p.alpha_threshold, 200);
         assert_eq!(p.resample_dpi, 150);
         assert_eq!(p.paper_color, Rgb::WHITE);
+    }
+
+    #[test]
+    fn resample_target_is_the_cell_grid_capped_by_dpi() {
+        let mut o = ModernOptions::default();
+        o.nominal_dot_mm = 12.0;
+        o.resample_dpi = 300;
+        // 297 mm at a 12 mm pitch: 25 x 25 cells; the 300 dpi cap is far above.
+        assert_eq!(resample_target_for(&o, [61.5, 0.0, 358.5, 297.0]), Some((25, 25)));
+        // A tiny pitch is capped by the requested resolution.
+        o.nominal_dot_mm = 0.01;
+        let (tw, th) = resample_target_for(&o, [0.0, 0.0, 297.0, 297.0]).unwrap();
+        assert_eq!(tw, (297.0f64 / 25.4 * 300.0) as u32);
+        assert_eq!(th, tw);
+        // Resampling off -> no target.
+        o.resample = false;
+        assert!(resample_target_for(&o, [0.0, 0.0, 297.0, 297.0]).is_none());
     }
 }

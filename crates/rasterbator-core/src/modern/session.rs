@@ -149,11 +149,11 @@ pub enum ImageComponent {
 }
 
 impl ImageComponent {
-    /// The PDF `/ColorSpace` name.
+    /// The PDF `/ColorSpace` name, including the leading slash.
     pub fn pdf_name(self) -> &'static str {
         match self {
-            ImageComponent::Gray => "DeviceGray",
-            ImageComponent::Rgb => "DeviceRGB",
+            ImageComponent::Gray => "/DeviceGray",
+            ImageComponent::Rgb => "/DeviceRGB",
         }
     }
 

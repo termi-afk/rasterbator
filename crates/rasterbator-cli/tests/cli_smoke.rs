@@ -61,6 +61,52 @@ fn modern_smoke_renders_one_page_pdf() {
 }
 
 #[test]
+fn modern_raster_smoke_writes_a_well_formed_image() {
+    // Regression test: the raster path wrote `/ColorSpace DeviceRGB`
+    // (no leading slash) and glued the path operators, so strict viewers
+    // rendered black pages.
+    let out = temp_pdf("modern-raster");
+    let _ = fs::remove_file(&out);
+
+    let output = Command::new(bin())
+        .arg(test_image("gradient.png"))
+        .args([
+            "--mode", "modern",
+            "--size", "120x120",
+            "--dot-size", "20",
+            "--screen", "plain",
+            "--render", "raster",
+            "--no-atomic",
+        ])
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("failed to run rasterbator");
+
+    assert!(
+        output.status.success(),
+        "modern raster run failed: {}\nstderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let bytes = fs::read(&out).expect("no PDF produced");
+    assert!(bytes.starts_with(b"%PDF"), "output is not a PDF");
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    assert!(text.contains("/DCTDecode"), "no raster image in the PDF");
+    assert!(
+        text.contains("/ColorSpace /DeviceRGB"),
+        "image colour space is not a name token"
+    );
+    assert!(
+        !text.contains("/ColorSpace DeviceRGB"),
+        "image colour space is missing the leading slash"
+    );
+
+    let _ = fs::remove_file(&out);
+}
+
+#[test]
 fn legacy_smoke_renders_pdf() {
     let out = temp_pdf("legacy-smoke");
     let _ = fs::remove_file(&out);

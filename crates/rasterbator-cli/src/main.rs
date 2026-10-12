@@ -32,7 +32,7 @@ use rasterbator_core::modern::{
     SizeSpec as ModernSizeSpec, SizeUnit, Stagger, ToneCurve,
 };
 use rasterbator_core::modern::options::PrintScaling;
-use rasterbator_core::modern::prepare::{prepare_image, PrepareOptions};
+use rasterbator_core::modern::prepare::{prepare_image, resample_target_for, PrepareOptions};
 use rasterbator_core::modern::source::{decode_rgba, inspect};
 
 /// Which engine to run.
@@ -1150,8 +1150,13 @@ fn run_modern(cli: &Cli) -> ExitCode {
         return ExitCode::from(2);
     }
 
-    // 8. Prepare the source.
-    let prepared = match prepare_image(&img, &PrepareOptions::from_options(&opts)) {
+    // 8. Prepare the source. The resample targets the cell grid of the source
+    //    rectangle, so every cell averages its own pixel.
+    let po = PrepareOptions {
+        resample_target: resample_target_for(&opts, geom.source_rect_mm),
+        ..PrepareOptions::from_options(&opts)
+    };
+    let prepared = match prepare_image(&img, &po) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("rasterbator: {e}");

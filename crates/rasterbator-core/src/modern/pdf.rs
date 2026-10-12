@@ -467,47 +467,52 @@ impl<'a> PageTarget for PdfTarget<'a> {
     }
     fn fill_rgb(&mut self, c: Rgb) {
         if let Some(p) = self.page.as_mut() {
-            op(&mut p.content, &format!("{} {} {} rg", c.0, c.1, c.2));
+            // `rg`/`RG` components are 0..1. Writing the raw u8 values made
+            // viewers clamp every mid-tone to 1.0: exports showed a few
+            // saturated (yellow) dots on an otherwise white page.
+            num(&mut p.content, f64::from(c.0) / 255.0);
+            num(&mut p.content, f64::from(c.1) / 255.0);
+            num(&mut p.content, f64::from(c.2) / 255.0);
+            op(&mut p.content, "rg");
         }
     }
     fn stroke_rgb(&mut self, c: Rgb) {
         if let Some(p) = self.page.as_mut() {
-            op(&mut p.content, &format!("{} {} {} RG", c.0, c.1, c.2));
+            num(&mut p.content, f64::from(c.0) / 255.0);
+            num(&mut p.content, f64::from(c.1) / 255.0);
+            num(&mut p.content, f64::from(c.2) / 255.0);
+            op(&mut p.content, "RG");
         }
     }
     fn line_width_pt(&mut self, w: f64) {
         if let Some(p) = self.page.as_mut() {
-            let mut v = Vec::new();
-            num(&mut v, w);
-            op(&mut p.content, &format!("{}w", String::from_utf8_lossy(&v).trim_end()));
+            num(&mut p.content, w);
+            op(&mut p.content, "w");
         }
     }
     fn move_to(&mut self, x: f64, y: f64) {
         if let Some(p) = self.page.as_mut() {
-            let mut v = Vec::new();
-            num(&mut v, x);
-            num(&mut v, y);
-            op(&mut p.content, &format!("{}m", String::from_utf8_lossy(&v).trim_end()));
+            num(&mut p.content, x);
+            num(&mut p.content, y);
+            op(&mut p.content, "m");
         }
     }
     fn line_to(&mut self, x: f64, y: f64) {
         if let Some(p) = self.page.as_mut() {
-            let mut v = Vec::new();
-            num(&mut v, x);
-            num(&mut v, y);
-            op(&mut p.content, &format!("{}l", String::from_utf8_lossy(&v).trim_end()));
+            num(&mut p.content, x);
+            num(&mut p.content, y);
+            op(&mut p.content, "l");
         }
     }
     fn curve_to(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64) {
         if let Some(p) = self.page.as_mut() {
-            let mut v = Vec::new();
-            num(&mut v, x1);
-            num(&mut v, y1);
-            num(&mut v, x2);
-            num(&mut v, y2);
-            num(&mut v, x3);
-            num(&mut v, y3);
-            op(&mut p.content, &format!("{}c", String::from_utf8_lossy(&v).trim_end()));
+            num(&mut p.content, x1);
+            num(&mut p.content, y1);
+            num(&mut p.content, x2);
+            num(&mut p.content, y2);
+            num(&mut p.content, x3);
+            num(&mut p.content, y3);
+            op(&mut p.content, "c");
         }
     }
     fn close_fill(&mut self) {
@@ -522,16 +527,14 @@ impl<'a> PageTarget for PdfTarget<'a> {
     }
     fn draw_image(&mut self, img: &EncodedImage, rect: [f64; 4]) {
         if let Some(p) = self.page.as_mut() {
-            let mut c = Vec::new();
-            num(&mut c, rect[2] - rect[0]);
-            num(&mut c, 0.0);
-            num(&mut c, 0.0);
-            num(&mut c, rect[3] - rect[1]);
-            num(&mut c, rect[0]);
-            num(&mut c, rect[1]);
-            let mut v = String::from_utf8_lossy(&c).trim_end().to_string();
-            v.push_str(" cm /Im0 Do Q");
-            op(&mut p.content, &format!("q {v}"));
+            op(&mut p.content, "q");
+            num(&mut p.content, rect[2] - rect[0]);
+            num(&mut p.content, 0.0);
+            num(&mut p.content, 0.0);
+            num(&mut p.content, rect[3] - rect[1]);
+            num(&mut p.content, rect[0]);
+            num(&mut p.content, rect[1]);
+            op(&mut p.content, "cm /Im0 Do Q");
             p.image = Some(img.clone());
         }
     }
@@ -687,6 +690,135 @@ mod tests {
         std::io::Read::read_to_end(&mut decoder, &mut out).unwrap();
         assert!(out.windows(3).any(|w| w == b" rg"));
         assert!(out.windows(3).any(|w| w == b" re"));
+    }
+    #[test]
+    fn colour_operators_use_unit_range_components() {
+        // Regression test: `rg`/`RG` components are 0..1. Writing the u8
+        // values (0..255) made viewers clamp every mid-tone to 1.0, so an
+        // export showed a few saturated (yellow) dots and an otherwise
+        // white page.
+        let boxes = PageBoxes { media: [0.0; 4], trim: [0.0; 4], bleed: [0.0; 4] };
+        let job = CellWindow { col: 0, row: 0, i0: 0, i1: 1, j0: 0, j1: 1 };
+        let mut pdf = ModernPdf::empty();
+        {
+            let mut target = PdfTarget::new(&mut pdf);
+            target.begin_page(0, &boxes, &job);
+            target.fill_rgb(Rgb(128, 64, 32));
+            target.stroke_rgb(Rgb(255, 255, 255));
+            target.end_page();
+        }
+        let b = pdf.bytes();
+
+        let marker = b"stream\n";
+        let start = b
+            .windows(marker.len())
+            .position(|w| w == marker)
+            .unwrap()
+            + marker.len();
+        let tail = b"\nendstream";
+        let end = b[start..]
+            .windows(tail.len())
+            .position(|w| w == tail)
+            .unwrap()
+            + start;
+        let mut decoder = flate2::read::ZlibDecoder::new(&b[start..end]);
+        let mut out = Vec::new();
+        std::io::Read::read_to_end(&mut decoder, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+
+        let mut saw_fill = false;
+        let mut saw_stroke = false;
+        for line in text.lines() {
+            let mut parts: Vec<&str> = line.split_whitespace().collect();
+            let opname = parts.pop().unwrap_or("");
+            if opname != "rg" && opname != "RG" {
+                continue;
+            }
+            assert_eq!(parts.len(), 3, "colour operator with wrong arity: {line}");
+            let vals: Vec<f64> = parts.iter().map(|v| v.parse().unwrap()).collect();
+            for v in &vals {
+                assert!(*v >= 0.0 && *v <= 1.0, "component out of range: {line}");
+            }
+            if opname == "rg" {
+                saw_fill = true;
+                assert!((vals[0] - 128.0 / 255.0).abs() < 1e-4, "{line}");
+                assert!((vals[1] - 64.0 / 255.0).abs() < 1e-4, "{line}");
+                assert!((vals[2] - 32.0 / 255.0).abs() < 1e-4, "{line}");
+            } else {
+                saw_stroke = true;
+            }
+        }
+        assert!(saw_fill, "no fill colour operator found");
+        assert!(saw_stroke, "no stroke colour operator found");
+    }
+    #[test]
+    fn content_tokens_are_properly_delimited() {
+        // Regression test: operators were glued to the preceding number
+        // (`28.35m`), which strict viewers reject — every page rendered
+        // blank. No content line may contain a digit immediately followed
+        // by a letter.
+        let boxes = PageBoxes { media: [0.0; 4], trim: [0.0; 4], bleed: [0.0; 4] };
+        let job = CellWindow { col: 0, row: 0, i0: 0, i1: 1, j0: 0, j1: 1 };
+        let mut pdf = ModernPdf::empty();
+        {
+            let mut target = PdfTarget::new(&mut pdf);
+            target.begin_page(0, &boxes, &job);
+            target.fill_rgb(Rgb(10, 20, 30));
+            target.line_width_pt(0.5);
+            target.move_to(1.5, 2.25);
+            target.line_to(3.0, 4.0);
+            target.curve_to(5.0, 6.0, 7.0, 8.0, 9.0, 10.0);
+            target.close_stroke();
+            target.move_to(11.0, 12.0);
+            target.close_fill();
+            target.stroke_rgb(Rgb(0, 0, 0));
+            target.draw_image(
+                &EncodedImage {
+                    w: 1,
+                    h: 1,
+                    component: crate::modern::session::ImageComponent::Gray,
+                    bytes: vec![0xFF, 0xD8],
+                },
+                [0.0, 0.0, 1.0, 1.0],
+            );
+            target.end_page();
+        }
+        let b = pdf.bytes();
+
+        let marker = b"stream\n";
+        let start = b
+            .windows(marker.len())
+            .position(|w| w == marker)
+            .unwrap()
+            + marker.len();
+        let tail = b"\nendstream";
+        let end = b[start..]
+            .windows(tail.len())
+            .position(|w| w == tail)
+            .unwrap()
+            + start;
+        let mut decoder = flate2::read::ZlibDecoder::new(&b[start..end]);
+        let mut out = Vec::new();
+        std::io::Read::read_to_end(&mut decoder, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+
+        for line in text.lines() {
+            let mut prev_digit = false;
+            for ch in line.chars() {
+                assert!(
+                    !(prev_digit && ch.is_ascii_alphabetic()),
+                    "operator glued to a number: {line}"
+                );
+                prev_digit = ch.is_ascii_digit();
+            }
+        }
+        assert!(text.contains("1.5 2.25 m"), "{text}");
+        assert!(text.contains("cm /Im0 Do Q"), "{text}");
+
+        // The image's `/ColorSpace` must be a name token (leading slash);
+        // without it strict viewers reject the image and render black.
+        let s = String::from_utf8_lossy(&b).into_owned();
+        assert!(s.contains("/ColorSpace /DeviceGray"), "{s}");
     }
 
     #[test]

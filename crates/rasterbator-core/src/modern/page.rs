@@ -84,16 +84,34 @@ pub fn tone_params(opts: &ModernOptions) -> ToneParams {
 }
 
 /// Converts poster millimetres to page points for one page.
+///
+/// The page shows the poster window `[origin, origin + step]`: `origin` is the
+/// page's top-left in poster millimetres and the trim box starts `inset_mm`
+/// from the media corner, so content maps as
+/// `page = poster - origin + inset`. Without the offset every page would draw
+/// at absolute poster coordinates and all but the first column/row would fall
+/// off the sheet.
 #[derive(Clone, Copy, Debug)]
 pub struct Frame {
     /// Media box height in points.
     pub height_pt: f64,
+    /// Poster-space origin of this page's window, in millimetres.
+    pub origin: (f64, f64),
+    /// Trim inset from the media corner, in millimetres.
+    pub inset_mm: f64,
 }
 
 impl Frame {
     /// Build the frame of a page.
-    pub fn new(boxes: &PageBoxes) -> Self {
-        Frame { height_pt: boxes.media[3] }
+    pub fn new(boxes: &PageBoxes, window: &CellWindow, geom: &JobGeometry) -> Self {
+        Frame {
+            height_pt: boxes.media[3],
+            origin: (
+                f64::from(window.col) * geom.step.w,
+                f64::from(window.row) * geom.step.h,
+            ),
+            inset_mm: geom.margin_mm,
+        }
     }
 
     /// Poster millimetres to page points.
@@ -101,14 +119,14 @@ impl Frame {
         mm * PT_PER_MM
     }
 
-    /// Poster millimetres to page points, flipping `y`.
+    /// Poster millimetres to page points along `x`.
     pub fn x(&self, mm: f64) -> f64 {
-        mm * PT_PER_MM
+        (mm - self.origin.0 + self.inset_mm) * PT_PER_MM
     }
 
-    /// Poster millimetres to page points, flipping `y` about the media box.
+    /// Poster millimetres to page points along `y`, flipping about the media box.
     pub fn y(&self, mm: f64) -> f64 {
-        self.height_pt - mm * PT_PER_MM
+        self.height_pt - (mm - self.origin.1 + self.inset_mm) * PT_PER_MM
     }
 }
 
@@ -176,7 +194,7 @@ pub fn render_page_strided(
     stride: CellStride,
 ) -> Result<(), RenderError> {
     let stride = stride.max(1) as i64;
-    let frame = Frame::new(&geom.boxes);
+    let frame = Frame::new(&geom.boxes, job, geom);
     let lattice = geom.lattice(opts);
     let params = tone_params(opts);
     let pitch = geom.pitch_mm;
@@ -576,12 +594,15 @@ mod tests {
     }
 
     #[test]
-    fn frame_flips_y_about_the_media_box() {
+    fn frame_maps_poster_mm_through_the_window_origin_and_inset() {
         let boxes = PageBoxes { media: [0.0, 0.0, 600.0, 800.0], trim: [0.0; 4], bleed: [0.0; 4] };
-        let f = Frame::new(&boxes);
-        assert_eq!(f.y(0.0), 800.0);
-        assert!((f.y(10.0) - (800.0 - 10.0 * PT_PER_MM)).abs() < 1e-12);
-        assert!((f.x(10.0) - 10.0 * PT_PER_MM).abs() < 1e-12);
+        let f = Frame { height_pt: boxes.media[3], origin: (100.0, 50.0), inset_mm: 10.0 };
+        // The window origin and the trim inset shift the content; y flips
+        // about the media box.
+        assert!((f.x(100.0) - 10.0 * PT_PER_MM).abs() < 1e-12);
+        assert!((f.x(110.0) - 20.0 * PT_PER_MM).abs() < 1e-12);
+        assert!((f.y(50.0) - (800.0 - 10.0 * PT_PER_MM)).abs() < 1e-12);
+        assert!((f.y(60.0) - (800.0 - 20.0 * PT_PER_MM)).abs() < 1e-12);
         assert!((f.pt(1.0) - PT_PER_MM).abs() < 1e-12);
     }
 

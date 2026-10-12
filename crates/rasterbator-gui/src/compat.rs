@@ -97,12 +97,20 @@ pub fn mosaic_map_color(c: Rgb, gain: f64) -> Rgb {
     color::mosaic_contrast(c, gain)
 }
 
-/// Prepare a decoded image with the job's preparation options.
+/// Prepare a decoded image for a source rectangle: the optional resample
+/// targets the cell grid of `rect_mm`, so every cell averages its own pixel.
 pub fn prepare_from_rgba(
     img: &image::RgbaImage,
     opts: &ModernOptions,
+    rect_mm: [f64; 4],
 ) -> Result<PreparedImage, String> {
-    prepare::prepare_image(img, &PrepareOptions::from_options(opts))
+    prepare::prepare_image(
+        img,
+        &PrepareOptions {
+            resample_target: prepare::resample_target_for(opts, rect_mm),
+            ..PrepareOptions::from_options(opts)
+        },
+    )
 }
 
 /// File-size guard (100 MB).

@@ -778,10 +778,10 @@ impl ModernApp {
             .map(|d| SourceInfo::synthetic(d.width(), d.height()))
     }
 
-    fn prep_fingerprint(&self) -> String {
+    fn prep_fingerprint(&self, rect: [f64; 4]) -> String {
         let o = &self.opts;
         format!(
-            "{}x{}|{:?}|{:?}|{}|{}|{}|{}|{}|{}|{:?}",
+            "{}x{}|{:?}|{:?}|{}|{}|{}|{}|{}|{}|{:?}|{:.4},{:.4},{:.4},{:.4}",
             self.decoded.as_ref().map(|d| d.width()).unwrap_or(0),
             self.decoded.as_ref().map(|d| d.height()).unwrap_or(0),
             o.rotate,
@@ -793,21 +793,39 @@ impl ModernApp {
             o.resample,
             o.resample_dpi,
             o.paper_color,
+            rect[0],
+            rect[1],
+            rect[2],
+            rect[3],
         )
     }
 
     /// Re-prepare (only when preparation inputs changed), re-solve the
     /// canonical geometry, re-validate, and schedule a debounced preview.
     fn refresh(&mut self) {
-        // 1. prepare
+        // 1. canonical geometry (shared with export; never recomputed elsewhere)
+        let src = self.src_info();
+        self.geom = match (&src, self.decoded.is_some()) {
+            (Some(s), true) => match JobGeometry::solve(&self.opts, s) {
+                Ok(g) => Some(Arc::new(g)),
+                Err(_) => None,
+            },
+            _ => None,
+        };
+        // 2. prepare (the resample targets the cell grid of the source rect)
         if self.decoded.is_some() {
-            let key = self.prep_fingerprint();
+            let rect = self
+                .geom
+                .as_deref()
+                .map(|g| g.source_rect_mm)
+                .unwrap_or([0.0, 0.0, 0.0, 0.0]);
+            let key = self.prep_fingerprint(rect);
             if key != self.prep_key {
                 self.prep_key = key;
                 let res = self
                     .decoded
                     .as_ref()
-                    .map(|d| prepare_from_rgba(d, &self.opts));
+                    .map(|d| prepare_from_rgba(d, &self.opts, rect));
                 match res {
                     Some(Ok(p)) => {
                         self.prepared = Some(Arc::new(p));
@@ -824,15 +842,6 @@ impl ModernApp {
             self.prepared = None;
             self.prep_key.clear();
         }
-        // 2. canonical geometry (shared with export; never recomputed elsewhere)
-        let src = self.src_info();
-        self.geom = match (&src, self.prepared.is_some()) {
-            (Some(s), true) => match JobGeometry::solve(&self.opts, s) {
-                Ok(g) => Some(Arc::new(g)),
-                Err(_) => None,
-            },
-            _ => None,
-        };
         // 3. validation (single source of diagnostics)
         self.report = validate(&self.opts, src.as_ref(), self.geom.as_deref());
         // 4. debounce the preview worker
