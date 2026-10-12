@@ -12,9 +12,10 @@ It contains:
 | Path | What it is |
 | --- | --- |
 | `Rasterbator.exe` | The analyzed original binary (Windows .NET, build 1.0.2693, ~2007). |
-| `crates/rasterbator-core` | The Rust engine as a reusable library (image → dot pages → PDF). |
-| `crates/rasterbator-cli` | Command line tool (`rasterbator`). |
-| `crates/rasterbator-gui` | Desktop wizard (`rasterbator-gui`) mirroring the original UI flow. |
+| `crates/rasterbator-core` | The Rust engines as a reusable library: the faithful `legacy` port plus the additive `modern` engine. |
+| `crates/rasterbator-cli` | Command line tool (`rasterbator`), `--mode legacy|modern`. |
+| `crates/rasterbator-gui` | Desktop app (`rasterbator-gui`): the original wizard and a modern workspace, chosen on start. |
+| `test-images/` | Small input fixtures used by the CLI smoke tests. |
 | `original/` | The original v1.0 (2005) C# sources, kept under their GPL license. |
 | `analysis/` | Reverse engineering artifacts and the verification harness. |
 
@@ -22,6 +23,48 @@ The Rust port reproduces the original's output **op for op**: for a matrix of
 16 input/option combinations the PDF content streams of the original engine
 and of this port are numerically identical (see
 [Verification](#verification)).
+
+## Engines: legacy and modern
+
+One tool, two engines:
+
+- **legacy** (default, `--mode legacy`) — the faithful port of the original
+  2007 application; its output is verified against the original engine and is
+  unchanged in 0.2.0.
+- **modern** (`--mode modern`) — an additive second engine with the modern
+  option surface. The GUI asks on start: *Classic wizard* or *Modern workspace*.
+
+Modern mode in brief:
+
+- **screens**: uniform lattice, half-pitch staggered, hexagonal, plain raster
+- **patterns**: dot, square, mosaic (with a contrast gain), triangle,
+  alternating triangle, horizontal/vertical line, morphing line
+- **tone**: min/max raster band, exponential/logarithmic response, invert,
+  box-average/nearest/bilinear sampling, Floyd–Steinberg / Atkinson / Bayer 4×4
+- **colour**: fixed, custom, per-cell average, grayscale, dual-tone (with
+  softness), page background, shading, inversion, built-in themes
+- **layout**: paper presets or custom, portrait/landscape, sizing by sheets or
+  exact size, contain/cover + alignment, cutting margin, overlap (margin or
+  shared mode), bleed, crop marks, coordinate page labels, page-count guards
+- **output**: vector shapes or raster JPEG tiles (`--render`, `--dpi`,
+  `--jpeg-quality`), `MediaBox`+`TrimBox`+`BleedBox`, `/PrintScaling /None`
+  by default so compliant viewers print at 100 %, atomic writes, progress with
+  ETA, `--print-summary` JSON on stdout
+- **input**: PNG/JPEG/WebP/GIF/BMP, EXIF orientation, rotation,
+  brightness/contrast/saturation, alpha threshold, crop, resampling
+- **presets**: save/load/list/delete option sets; the GUI remembers settings
+
+```
+rasterbator --mode modern photo.jpg                    # A4, 5 sheets wide
+rasterbator --mode modern photo.jpg --screen hex --dot-size 12
+rasterbator --mode modern photo.jpg --pattern mosaic --mosaic-contrast 2 \
+            --render raster --dpi 300
+rasterbator --mode modern photo.jpg --color average --dither fs
+rasterbator --mode modern photo.jpg --labels coordinates --margin-mm 12 --overlap-mm 10
+rasterbator --dump-options photo.jpg                   # print the resolved option set, no render
+```
+
+`rasterbator --mode modern --help` lists every option with defaults and ranges.
 
 ---
 
@@ -76,9 +119,10 @@ These are not accidents; they are required for output equality:
 
 ```
 Cargo.toml                  workspace (core + cli + gui)
-crates/rasterbator-core/    library: engine, canvas, PDF writer, number format
-crates/rasterbator-cli/     `rasterbator` binary
-crates/rasterbator-gui/     `rasterbator-gui` binary (eframe/egui wizard)
+crates/rasterbator-core/    library: legacy engine + PDF writer, modern engine (src/modern/), number format
+crates/rasterbator-cli/     `rasterbator` binary (legacy + modern modes)
+crates/rasterbator-gui/     `rasterbator-gui` binary (eframe/egui; wizard + modern workspace)
+test-images/                small input fixtures for the smoke tests
 original/                   2005 GPL sources + COPYING + provenance (Wayback link)
 analysis/                   decompiled sources, IL dumps, oracle harness, comparators
 ```
@@ -174,6 +218,13 @@ How the port was validated against the original (details and scripts in
    and compares original vs port. **All 16 match** (numbers equal within
    0.011 pt; the JPEG scenarios also match at that tolerance).
 
+5. **Modern engine.** `cargo test --workspace` runs 202 tests: 163 unit tests
+   plus 26 end-to-end integration tests in `rasterbator-core` (transfer table
+   with exact expected extents, layout/window invariants, dithering properties,
+   presets round-trips, full-page renders), CLI mapping/smoke tests and GUI
+   logic tests. Structural checks of the produced PDFs confirm page boxes,
+   `/PrintScaling`, page labels and raster tiles.
+
 Known limits of the verification: the oracle runs the original engine's IL on
 a modern .NET runtime (the binary itself needs .NET 1.1), it exercises the
 engine, not the WinForms UI; image decoding uses `image` crate decoders
@@ -191,12 +242,14 @@ the tested cases).
 - The wizard one-dimension rounding uses the exact image aspect instead of the
   rounded preview size (sub-pixel difference, no effect on dot layout).
 - Error messages/UX text are new.
+- Modern mode is a new engine, not a port of anything: its options, defaults
+  and validation rules are documented in `--help` and the design notes.
 
 ## Building
 
 ```
 cargo build --release            # all three crates
-cargo test                       # unit tests (number format, size math)
+cargo test                       # workspace tests (legacy + modern, ~200 tests)
 cargo run --release -p rasterbator-cli -- --help
 ```
 

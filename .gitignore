@@ -10,3 +10,5 @@ analysis/*.txt
 *.user
 ghidra_projects/
 .secrets/
+analysis/reference/
+analysis/work/
