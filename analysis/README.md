@@ -16,6 +16,9 @@ verifies the Rust port against the original engine.
 | `oracle/nuget/` | iTextSharp 5.5.13.3 from NuGet (unused fallback, kept for reference). |
 | `compare_pdfs.py` | pypdf-based comparator: per-page content-stream token diff (numbers with tolerance), page count, media boxes, Title/Creator. |
 | `run_matrix.ps1` | Runs the full 16-scenario matrix (original vs port) and reports pass/fail. |
+| `verify-legacy-output.ps1` | Runs the matrix and additionally compares every produced PDF against the recorded 0.1.0 baseline (hashes normalised for the legacy writer's live `/CreationDate`). |
+| `inspect_modern.py` | Structural inspection of modern-mode PDFs (page count, media/trim/bleed boxes, `/PrintScaling`, `/PageLabels`, raster tiles). |
+| `make-work-copy.ps1` | Creates an isolated working copy of the workspace (used for parallel implementation tasks). |
 | `refs/`, `rust-outs/` | Generated PDFs (reference and port) for the last matrix run. |
 
 ## Reproducing the verification
@@ -30,11 +33,11 @@ dotnet build -c Release
 cd ../..
 cargo build --release -p rasterbator-cli
 
-# 3. Test images (once), then run the matrix.
+# 3. Test images (once), then the full legacy check: matrix + 0.1.0 baseline.
 cd analysis/refgen
 ./bin/Release/net10.0-windows/refgen.exe make-images --out images
 cd ../..
-pwsh analysis/run_matrix.ps1          # uses python + pypdf
+pwsh analysis/verify-legacy-output.ps1   # uses python + pypdf
 ```
 
 Single comparison:
@@ -55,6 +58,10 @@ python analysis/compare_pdfs.py analysis/refgen/refs/s01_gradient_a4_black.pdf `
   changes, not just geometry. Numbers are compared with tolerance because the
   original quantizes coordinates to 2 decimals (see
   `crates/rasterbator-core/src/numfmt.rs`); the port quantizes identically.
+- The modern engine is a new engine, not a port: it is covered by the
+  workspace test suite (unit + end-to-end integration) and inspected
+  structurally with `inspect_modern.py`; output equality against the original
+  is a property of the legacy path only.
 - The matrix intentionally avoids cases where the harness and the port would
   use different image decoders as *ground truth* (e.g. exotic formats); PNG
   and GIF scenarios are exact, JPEG scenarios are tolerated at 0.5 pt but
